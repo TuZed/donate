@@ -6,24 +6,24 @@
   <meta name="description" content="Bảng ghi nhận tham gia và ủng hộ — màn hình nhập liệu và màn hình hiển thị đồng bộ.">
   <title>Bảng ghi nhận tham gia</title>
   <link rel="stylesheet" href="./styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./scripts.js" defer></script>
 </head>
 <body class="mode-input">
 
-  <!-- ============ MÀN NHẬP LIỆU ============ -->
   <div id="viewInput" class="view view--input">
-
     <header class="app-header">
       <h1>✨ BẢNG GHI NHẬN THAM GIA ✨</h1>
       <p>HỆ THỐNG QUẢN LÝ DANH SÁCH VÀ SỐ TIỀN</p>
     </header>
 
     <main class="container">
+      <div id="syncStatusInput" class="sync-status" role="status" aria-live="polite"></div>
 
       <section class="panel open-display-panel">
         <div class="open-display-panel__text">
           <strong>Màn hình hiển thị</strong>
-          <p>Mở cửa sổ riêng để trình chiếu lên màn hình lớn. Dữ liệu tự động đồng bộ hai chiều.</p>
+          <p>Mở cửa sổ riêng để trình chiếu lên màn hình lớn. Dữ liệu tự động đồng bộ qua Supabase.</p>
         </div>
         <button id="openDisplayBtn" type="button" class="button button--primary">
           Mở màn hình hiển thị
@@ -32,7 +32,6 @@
 
       <section class="panel">
         <h2>📝 Nhập thông tin</h2>
-
         <form id="entryForm" class="form" novalidate>
           <div class="field">
             <label for="nameInput">Họ và tên</label>
@@ -41,7 +40,6 @@
                    aria-describedby="nameError" required>
             <p id="nameError" class="field__error" hidden></p>
           </div>
-
           <div class="field">
             <label for="moneyInput">Số tiền (VNĐ)</label>
             <input id="moneyInput" name="money" type="number"
@@ -50,27 +48,18 @@
                    aria-describedby="moneyError" required>
             <p id="moneyError" class="field__error" hidden></p>
           </div>
-
-          <button class="button button--primary" type="submit">
+          <button class="button button--primary" type="submit" id="submitBtn">
             + THÊM VÀO DANH SÁCH
           </button>
         </form>
 
         <div class="stats" aria-live="polite">
-          <div class="stat">
-            <strong id="count">0</strong>
-            SỐ NGƯỜI THAM GIA
-          </div>
-          <div class="stat">
-            <strong id="total">0đ</strong>
-            TỔNG SỐ TIỀN
-          </div>
+          <div class="stat"><strong id="count">0</strong> SỐ NGƯỜI THAM GIA</div>
+          <div class="stat"><strong id="total">0đ</strong> TỔNG SỐ TIỀN</div>
         </div>
 
         <div class="panel__actions">
-          <button id="clearBtn" type="button" class="button button--danger">
-            XÓA TOÀN BỘ
-          </button>
+          <button id="clearBtn" type="button" class="button button--danger">XÓA TOÀN BỘ</button>
         </div>
       </section>
 
@@ -78,10 +67,7 @@
         <h2>🌟 Xem trước màn hình hiển thị</h2>
         <div class="preview-marquee">
           <div class="marquee" data-marquee="preview">
-            <div class="track">
-              <div class="group"></div>
-              <div class="group"></div>
-            </div>
+            <div class="track"><div class="group"></div><div class="group"></div></div>
           </div>
         </div>
       </section>
@@ -90,35 +76,23 @@
         <h2>📋 LỊCH SỬ GHI NHẬN</h2>
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr>
-                <th scope="col">STT</th>
-                <th scope="col">Họ tên</th>
-                <th scope="col">Số tiền</th>
-              </tr>
-            </thead>
+            <thead><tr><th scope="col">STT</th><th scope="col">Họ tên</th><th scope="col">Số tiền</th></tr></thead>
             <tbody id="tableBody"></tbody>
           </table>
         </div>
       </section>
-
     </main>
   </div>
 
-  <!-- ============ MÀN HIỂN THỊ ============ -->
   <div id="viewDisplay" class="view view--display">
     <div class="display-screen">
-
       <header class="display-header">
         <h1>🌟 DANH SÁCH ỦNG HỘ 🌟</h1>
       </header>
 
       <div class="display-marquee-wrap">
         <div class="marquee" data-marquee="display">
-          <div class="track">
-            <div class="group"></div>
-            <div class="group"></div>
-          </div>
+          <div class="track"><div class="group"></div><div class="group"></div></div>
         </div>
       </div>
 
@@ -133,9 +107,10 @@
         </div>
       </footer>
 
+      <div id="syncStatusDisplay" class="sync-status sync-status--dark" role="status" aria-live="polite"></div>
+
       <button class="display-fullscreen-btn" id="fullscreenBtn"
               type="button" aria-label="Bật toàn màn hình">⛶</button>
-
     </div>
   </div>
 
