@@ -471,3 +471,25 @@ body.mode-display .empty {
   }
   .marquee { overflow-x: auto; }
 }
+/* =========================================================
+   SYNC STATUS
+   ========================================================= */
+.sync-status {
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: 4px 0;
+}
+
+.sync-status--error {
+  color: var(--color-error);
+}
+
+.sync-status--dark {
+  color: #b8a8f0;
+}
+
+.sync-status--dark.sync-status--error {
+  color: #ff8fa3;
+}
