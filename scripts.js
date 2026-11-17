@@ -2,20 +2,40 @@
 
 (() => {
   /* =========================================================
+     CẤU HÌNH SUPABASE — ĐIỀN THÔNG TIN CỦA BẠN
+     ========================================================= */
+  const SUPABASE_URL = "https://ktrapgpglbsqukipzook.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_nRjbF6SkyRBoh_3wzevbeA_G9XOdDGc";
+
+  /* =========================================================
      CONSTANTS
      ========================================================= */
-  const STORAGE_KEY   = "danh_sach_tham_gia_v3";
-  const SYNC_CHANNEL  = "danh_sach_tham_gia_sync";
-  const PREVIEW_SPEED = 80;   // px/giây — marquee nhỏ
-  const DISPLAY_SPEED = 120;  // px/giây — marquee lớn
+  const TABLE = "people";
+  const PREVIEW_SPEED = 80;
+  const DISPLAY_SPEED = 120;
 
   const prefersReducedMotion =
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   /* =========================================================
+     KHỞI TẠO SUPABASE CLIENT
+     ========================================================= */
+  if (!window.supabase) {
+    document.body.innerHTML =
+      '<p style="padding:24px;font-family:sans-serif;color:#c03939">' +
+      "Không tải được Supabase JS. Kiểm tra kết nối mạng và thử lại." +
+      "</p>";
+    return;
+  }
+
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  /* =========================================================
      STATE
      ========================================================= */
-  let people = [];
+  let people = [];          // { id, name, money, created_at }
+  let isLoading = true;
+  let isMutating = false;
 
   /* =========================================================
      MODE DETECTION
@@ -29,19 +49,22 @@
   /* =========================================================
      DOM REFERENCES
      ========================================================= */
-  const form          = document.getElementById("entryForm");
-  const nameInput     = document.getElementById("nameInput");
-  const moneyInput    = document.getElementById("moneyInput");
-  const nameErrorEl   = document.getElementById("nameError");
-  const moneyErrorEl  = document.getElementById("moneyError");
-  const countEl       = document.getElementById("count");
-  const totalEl       = document.getElementById("total");
-  const tableBody     = document.getElementById("tableBody");
-  const clearBtn      = document.getElementById("clearBtn");
-  const openDisplayBtn = document.getElementById("openDisplayBtn");
-  const displayCountEl = document.getElementById("displayCount");
-  const displayTotalEl = document.getElementById("displayTotal");
-  const fullscreenBtn  = document.getElementById("fullscreenBtn");
+  const form            = document.getElementById("entryForm");
+  const nameInput       = document.getElementById("nameInput");
+  const moneyInput      = document.getElementById("moneyInput");
+  const nameErrorEl     = document.getElementById("nameError");
+  const moneyErrorEl    = document.getElementById("moneyError");
+  const countEl         = document.getElementById("count");
+  const totalEl         = document.getElementById("total");
+  const tableBody       = document.getElementById("tableBody");
+  const clearBtn        = document.getElementById("clearBtn");
+  const openDisplayBtn  = document.getElementById("openDisplayBtn");
+  const submitBtn       = document.getElementById("submitBtn");
+  const displayCountEl  = document.getElementById("displayCount");
+  const displayTotalEl  = document.getElementById("displayTotal");
+  const fullscreenBtn   = document.getElementById("fullscreenBtn");
+  const syncStatusInput = document.getElementById("syncStatusInput");
+  const syncStatusDisplay = document.getElementById("syncStatusDisplay");
 
   const previewMarqueeEl = document.querySelector('[data-marquee="preview"]');
   const displayMarqueeEl = document.querySelector('[data-marquee="display"]');
@@ -58,7 +81,12 @@
     const name = typeof raw.name === "string" ? raw.name.trim() : "";
     const money = Number(raw.money);
     if (!name || !Number.isFinite(money) || money < 0) return null;
-    return { name, money };
+    return {
+      id: raw.id,
+      name,
+      money,
+      created_at: raw.created_at
+    };
   }
 
   function sanitizeList(list) {
@@ -66,102 +94,79 @@
     return list.map(sanitizePerson).filter(Boolean);
   }
 
-  /* =========================================================
-     PERSISTENCE
-     ========================================================= */
-  function loadFromStorage() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      return sanitizeList(JSON.parse(raw));
-    } catch (e) {
-      console.warn("Không đọc được dữ liệu đã lưu:", e);
-      return [];
-    }
-  }
-
-  function saveToStorage() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(people));
-    } catch (e) {
-      console.warn("Không ghi được vào localStorage:", e);
-    }
-  }
-
-  /* =========================================================
-     CROSS-TAB SYNC
-     ========================================================= */
-  let syncChannel = null;
-  try {
-    syncChannel = new BroadcastChannel(SYNC_CHANNEL);
-  } catch (e) {
-    syncChannel = null;
-    console.warn("BroadcastChannel không khả dụng — dùng storage event.");
-  }
-
-  function broadcastChange() {
-    if (!syncChannel) return;
-    try { syncChannel.postMessage({ type: "sync", people }); }
-    catch (e) { console.warn("Broadcast lỗi:", e); }
-  }
-
-  function applyRemotePeople(newPeople) {
-    const clean = sanitizeList(newPeople);
-    const currentSer = JSON.stringify(people);
-    const nextSer = JSON.stringify(clean);
-    if (currentSer === nextSer) return; // tránh render thừa
-    people = clean;
-    render();
-  }
-
-  if (syncChannel) {
-    syncChannel.addEventListener("message", (e) => {
-      if (!e.data || e.data.type !== "sync") return;
-      applyRemotePeople(e.data.people);
+  function setSyncStatus(message, isError = false) {
+    const targets = [syncStatusInput, syncStatusDisplay].filter(Boolean);
+    targets.forEach((el) => {
+      el.textContent = message || "";
+      el.classList.toggle("sync-status--error", Boolean(isError));
     });
   }
 
-  window.addEventListener("storage", (e) => {
-    if (e.key !== STORAGE_KEY || !e.newValue) return;
-    try {
-      applyRemotePeople(JSON.parse(e.newValue));
-    } catch (err) {
-      console.warn("Storage event không hợp lệ:", err);
-    }
-  });
+  function setBusy(busy) {
+    isMutating = busy;
+    if (submitBtn) submitBtn.disabled = busy || isLoading;
+    if (clearBtn) clearBtn.disabled = busy || isLoading;
+    if (openDisplayBtn) openDisplayBtn.disabled = busy || isLoading;
+  }
 
   /* =========================================================
-     MARQUEE
+     SUPABASE DATA ACCESS
+     ========================================================= */
+  async function fetchPeople() {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("id, name, money, created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    return sanitizeList(data || []);
+  }
+
+  async function insertPerson(name, money) {
+    const { error } = await supabase
+      .from(TABLE)
+      .insert([{ name, money }]);
+
+    if (error) throw error;
+  }
+
+  async function deleteAllPeople() {
+    // Xoá tất cả: điều kiện luôn đúng với id > 0
+    const { error } = await supabase
+      .from(TABLE)
+      .delete()
+      .gt("id", 0);
+
+    if (error) throw error;
+  }
+
+  /* =========================================================
+     MARQUEE (giữ nguyên cơ chế cũ)
      ========================================================= */
   class Marquee {
     constructor(rootEl, speed) {
-      this.root   = rootEl;
-      this.track  = rootEl.querySelector(".track");
+      this.root = rootEl;
+      this.track = rootEl.querySelector(".track");
       this.groups = Array.from(rootEl.querySelectorAll(".group"));
-
       if (this.groups.length < 2) {
-        throw new Error("Marquee cần ít nhất 2 .group bên trong .track.");
+        throw new Error("Marquee cần ít nhất 2 .group.");
       }
-
-      this.speed     = speed;
-      this.x         = 0;
-      this.lastTime  = 0;
-      this.rafId     = null;
+      this.speed = speed;
+      this.x = 0;
+      this.lastTime = 0;
+      this.rafId = null;
       this.groupWidth = 0;
       this.isRunning = false;
     }
 
     setItems(nodes) {
-      // Xoá nội dung cũ
       this.groups.forEach((g) => g.replaceChildren());
 
-      // ----- Trạng thái rỗng -----
       if (!nodes || nodes.length === 0) {
         this.groups.forEach((g) => {
           const empty = document.createElement("div");
           empty.className = "empty";
-          empty.textContent =
-            "Trường THPT chuyên Nguyễn Chí Thanh — Lâm Đồng";
+          empty.textContent = "Chưa có dữ liệu — hãy thêm người tham gia.";
           g.appendChild(empty);
         });
         this.groupWidth = this.groups[0].scrollWidth;
@@ -171,7 +176,6 @@
         return;
       }
 
-      // ----- Giảm chuyển động: chỉ hiển thị tĩnh, cho phép cuộn ngang -----
       if (prefersReducedMotion) {
         nodes.forEach((n) => this.groups[0].appendChild(n));
         this.groups[1].replaceChildren();
@@ -182,13 +186,11 @@
         return;
       }
 
-      // ----- Bình thường: nhân bản vào cả 2 group -----
       const fillGroup = (group) => {
         nodes.forEach((n) => group.appendChild(n.cloneNode(true)));
       };
       this.groups.forEach(fillGroup);
 
-      // Đảm bảo mỗi group đủ rộng để phủ viewport
       const viewportWidth = this.root.clientWidth || 0;
       if (viewportWidth > 0) {
         this.groups.forEach((group) => {
@@ -208,18 +210,14 @@
     }
 
     start() {
-      if (this.isRunning) return;
-      if (this.groupWidth <= 0) return;
-
+      if (this.isRunning || this.groupWidth <= 0) return;
       const viewportWidth = this.root.clientWidth || 0;
       if (this.groupWidth < viewportWidth) {
-        // Nội dung chưa đủ rộng để cuộn mượt — đứng yên
         this.track.style.transform = "translateX(0)";
         return;
       }
-
       this.isRunning = true;
-      this.lastTime  = 0;
+      this.lastTime = 0;
       this.rafId = requestAnimationFrame((now) => this.tick(now));
     }
 
@@ -233,25 +231,17 @@
 
     tick(now) {
       if (!this.isRunning) return;
-
       if (!this.lastTime) this.lastTime = now;
       let dt = (now - this.lastTime) / 1000;
-      if (dt > 0.1) dt = 0.1; // chống nhảy khi tab được phục hồi
+      if (dt > 0.1) dt = 0.1;
       this.lastTime = now;
-
       this.x -= this.speed * dt;
-
-      // Bọc vòng: track chứa 2 group giống nhau
-      while (this.x <= -this.groupWidth) {
-        this.x += this.groupWidth;
-      }
-
+      while (this.x <= -this.groupWidth) this.x += this.groupWidth;
       this.track.style.transform = `translateX(${this.x}px)`;
       this.rafId = requestAnimationFrame((n) => this.tick(n));
     }
   }
 
-  // Chỉ khởi tạo marquee cho view đang hoạt động
   let activeMarquee = null;
   if (isDisplayMode && displayMarqueeEl) {
     activeMarquee = new Marquee(displayMarqueeEl, DISPLAY_SPEED);
@@ -282,19 +272,17 @@
      RENDER
      ========================================================= */
   function render() {
-    // Marquee
     if (activeMarquee) {
-      const nodes = people.map(makeMarqueeItem);
-      activeMarquee.setItems(nodes);
+      activeMarquee.setItems(people.map(makeMarqueeItem));
     }
 
     const sum = people.reduce((t, p) => t + p.money, 0);
 
-    // Input view — stats
     if (countEl) countEl.textContent = people.length;
     if (totalEl) totalEl.textContent = formatMoney(sum);
+    if (displayCountEl) displayCountEl.textContent = people.length;
+    if (displayTotalEl) displayTotalEl.textContent = formatMoney(sum);
 
-    // Input view — bảng lịch sử
     if (tableBody) {
       tableBody.replaceChildren();
 
@@ -325,9 +313,58 @@
       }
     }
 
-    // Display view — stats
-    if (displayCountEl) displayCountEl.textContent = people.length;
-    if (displayTotalEl) displayTotalEl.textContent = formatMoney(sum);
+    setBusy(isMutating);
+  }
+
+  /* =========================================================
+     LOAD / REFRESH
+     ========================================================= */
+  async function refreshFromSupabase(showLoading = true) {
+    if (showLoading) {
+      isLoading = true;
+      setSyncStatus("Đang tải dữ liệu…");
+      setBusy(false);
+    }
+
+    try {
+      people = await fetchPeople();
+      render();
+      setSyncStatus(`Đã đồng bộ · ${people.length} người`);
+    } catch (err) {
+      console.error("Lỗi tải dữ liệu Supabase:", err);
+      setSyncStatus(
+        "Không tải được dữ liệu. Kiểm tra kết nối và cấu hình Supabase.",
+        true
+      );
+      // Giữ dữ liệu cũ (nếu có) để giao diện không trắng
+    } finally {
+      isLoading = false;
+      setBusy(isMutating);
+    }
+  }
+
+  /* =========================================================
+     REALTIME — LẮNG NGHE THAY ĐỔI TỪ MÁY KHÁC
+     ========================================================= */
+  function subscribeRealtime() {
+    const channel = supabase
+      .channel("people-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: TABLE },
+        (payload) => {
+          // Đơn giản và an toàn: tải lại danh sách mỗi khi có thay đổi
+          console.debug("Realtime change:", payload.eventType);
+          refreshFromSupabase(false);
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.debug("Realtime đã kết nối.");
+        }
+      });
+
+    return channel;
   }
 
   /* =========================================================
@@ -380,29 +417,49 @@
   /* =========================================================
      ACTIONS
      ========================================================= */
-  function commitChange() {
-    saveToStorage();
-    broadcastChange();
-    render();
-  }
-
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
+    if (isMutating || isLoading) return;
+
     const data = validateForm();
     if (!data) return;
 
-    people.unshift({ name: data.name, money: data.money });
-    commitChange();
+    setBusy(true);
+    setSyncStatus("Đang lưu…");
 
-    form.reset();
-    nameInput.focus();
+    try {
+      await insertPerson(data.name, data.money);
+      form.reset();
+      nameInput.focus();
+      await refreshFromSupabase(false);
+      setSyncStatus("Đã lưu thành công.");
+    } catch (err) {
+      console.error("Lỗi thêm người:", err);
+      setSyncStatus("Không lưu được. Vui lòng thử lại.", true);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function handleClearAll() {
-    if (people.length === 0) return;
-    if (!confirm("Bạn có chắc muốn xoá toàn bộ danh sách?")) return;
-    people = [];
-    commitChange();
+  async function handleClearAll() {
+    if (isMutating || isLoading || people.length === 0) return;
+    if (!confirm("Bạn có chắc muốn xoá toàn bộ danh sách trên Supabase?")) {
+      return;
+    }
+
+    setBusy(true);
+    setSyncStatus("Đang xoá…");
+
+    try {
+      await deleteAllPeople();
+      await refreshFromSupabase(false);
+      setSyncStatus("Đã xoá toàn bộ danh sách.");
+    } catch (err) {
+      console.error("Lỗi xoá dữ liệu:", err);
+      setSyncStatus("Không xoá được. Vui lòng thử lại.", true);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function handleOpenDisplay() {
@@ -416,7 +473,8 @@
     if (!win) {
       alert(
         "Trình duyệt chặn cửa sổ bật lên.\n" +
-        "Vui lòng cho phép popup hoặc mở thủ công:\n\n" + url.toString()
+          "Vui lòng cho phép popup hoặc mở thủ công:\n\n" +
+          url.toString()
       );
     }
   }
@@ -446,17 +504,13 @@
   /* =========================================================
      EVENT BINDING
      ========================================================= */
-  if (form) {
-    form.addEventListener("submit", handleSubmit);
-  }
-
+  if (form) form.addEventListener("submit", handleSubmit);
   if (nameInput) {
     nameInput.addEventListener("input", () => clearError(nameInput, nameErrorEl));
   }
   if (moneyInput) {
     moneyInput.addEventListener("input", () => clearError(moneyInput, moneyErrorEl));
   }
-
   if (clearBtn) clearBtn.addEventListener("click", handleClearAll);
   if (openDisplayBtn) openDisplayBtn.addEventListener("click", handleOpenDisplay);
   if (fullscreenBtn) fullscreenBtn.addEventListener("click", handleFullscreen);
@@ -464,7 +518,6 @@
   document.addEventListener("fullscreenchange", updateFullscreenIcon);
   updateFullscreenIcon();
 
-  // Re-render khi viewport thay đổi (debounced)
   let resizeTimer = null;
   window.addEventListener("resize", () => {
     if (resizeTimer) clearTimeout(resizeTimer);
@@ -477,6 +530,9 @@
   /* =========================================================
      INITIALIZATION
      ========================================================= */
-  people = loadFromStorage();
-  render();
+  (async function init() {
+    setBusy(false);
+    await refreshFromSupabase(true);
+    subscribeRealtime();
+  })();
 })();
